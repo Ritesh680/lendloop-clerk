@@ -1,0 +1,206 @@
+{
+  "id": "LLerrorHandler01",
+  "name": "LendLoop: Error handler",
+  "active": false,
+  "nodes": [
+    {
+      "id": "on-workflow-error",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "describe-failure",
+      "name": "Describe failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Signed string: <timestamp>.<METHOD>.<path>.<exact body>. Must match\n// canonicalString() in convex/lib/hmac.ts.\n\nconst { execution = {}, workflow = {}, trigger } = $input.first().json;\nconst scrub = (text) => String(text ?? 'Unknown error').replace(/[^\\s@]+@[^\\s@]+/g, '[email]').slice(0, 500);\n\nconst failure = {\n  // Falls back for a trigger that failed before an execution existed.\n  executionId: String(execution.id ?? `trigger-${workflow.id}-${Date.now()}`),\n  workflowName: String(workflow.name ?? 'Unknown workflow'),\n  nodeName: String(execution.lastNodeExecuted ?? trigger?.error?.node?.name ?? 'Unknown node'),\n  message: scrub(execution.error?.message ?? trigger?.error?.message),\n};\nconst body = JSON.stringify(failure);\nconst timestamp = String(Math.floor(Date.now() / 1000));\nreturn [{\n  json: {\n    ...failure,\n    body,\n    timestamp,\n    canonical: `${timestamp}.POST./n8n/workflow-failure.${body}`,\n  },\n}];"
+      }
+    },
+    {
+      "id": "sign-report",
+      "name": "Sign report",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "binaryData": false,
+        "value": "={{ $json.canonical }}",
+        "dataPropertyName": "signature",
+        "encoding": "hex"
+      },
+      "credentials": {
+        "crypto": {
+          "id": "LLhmacSign000001",
+          "name": "LendLoop outbound HMAC (n8n to Convex)"
+        }
+      }
+    },
+    {
+      "id": "report-to-convex",
+      "name": "Report to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "__CONVEX_SITE_URL__/n8n/workflow-failure",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "=v1={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "compose-ops-alert",
+      "name": "Compose ops alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const { workflowName, nodeName, message, executionId } = $('Describe failure').first().json;\nreturn [{\n  json: {\n    to: '__OPS_EMAIL__',\n    subject: `[LendLoop] ${workflowName} failed`,\n    text: `Workflow: ${workflowName}\\nNode: ${nodeName}\\nExecution: ${executionId}\\nError: ${message}`,\n  },\n}];"
+      }
+    },
+    {
+      "id": "email-ops",
+      "name": "Email ops",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "LendLoop <no-reply@lendloop.local>",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "LLsmtp0000000001",
+          "name": "LendLoop SMTP"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Describe failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe failure": {
+      "main": [
+        [
+          {
+            "node": "Sign report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign report": {
+      "main": [
+        [
+          {
+            "node": "Report to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report to Convex": {
+      "main": [
+        [
+          {
+            "node": "Compose ops alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose ops alert": {
+      "main": [
+        [
+          {
+            "node": "Email ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false
+  },
+  "pinData": {},
+  "versionId": "LLerrorHandler01-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

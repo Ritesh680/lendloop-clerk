@@ -1,0 +1,46 @@
+{
+  "name": "lendloop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "dev:convex": "convex dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "setup:integration": "sh scripts/setup-integration.sh",
+    "n8n:run-overdue": "docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5699 n8n n8n execute --id LLoverdueRemind1"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^7.9.23",
+    "clsx": "^2.1.1",
+    "convex": "^1.49.0",
+    "convex-helpers": "^0.1.133",
+    "lucide-react": "^1.66.0",
+    "next": "^16.4.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sonner": "^2.0.8"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "convex-test": "^0.0.66",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.4",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5"
+  }
+}

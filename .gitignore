@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+!.env.example
+.convex/
+.clerk/
+coverage/
+.DS_Store
+AGENTS.md

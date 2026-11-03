@@ -1,0 +1,395 @@
+{
+  "id": "LLrequestNotify1",
+  "name": "LendLoop: Request notification",
+  "active": false,
+  "nodes": [
+    {
+      "id": "request-event-webhook",
+      "name": "Request event webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request-event",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "webhookId": "lendloop-request-event"
+    },
+    {
+      "id": "prepare-signature-check",
+      "name": "Prepare signature check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Signed string: <timestamp>.<METHOD>.<path>.<exact body>. Must match\n// canonicalString() in convex/lib/hmac.ts.\n\nconst raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst headers = $input.first().json.headers ?? {};\nconst timestamp = String(headers['x-lendloop-timestamp'] ?? '');\nreturn [{\n  json: {\n    rawBody: raw,\n    timestamp,\n    received: String(headers['x-lendloop-signature'] ?? ''),\n    canonical: `${timestamp}.POST./webhook/lendloop-request-event.${raw}`,\n  },\n}];"
+      }
+    },
+    {
+      "id": "compute-expected-hmac",
+      "name": "Compute expected HMAC",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "binaryData": false,
+        "value": "={{ $json.canonical }}",
+        "dataPropertyName": "expected",
+        "encoding": "hex"
+      },
+      "credentials": {
+        "crypto": {
+          "id": "LLhmacVerify0001",
+          "name": "LendLoop inbound HMAC (Convex to n8n)"
+        }
+      }
+    },
+    {
+      "id": "verify-signature",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// The Crypto node has already computed the expected HMAC with the credential's\n// secret, so this node never touches the secret itself.\nconst MAX_SKEW_SECONDS = 300;\nconst { rawBody, timestamp, received, expected } = $input.first().json;\n\n// Constant-time comparison: the time taken doesn't reveal how many bytes match.\nfunction safeEqual(a, b) {\n  if (a.length !== b.length) return false;\n  let diff = 0;\n  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);\n  return diff === 0;\n}\n\nconst seconds = Number(timestamp);\nconst fresh = Number.isInteger(seconds) && Math.abs(Date.now() / 1000 - seconds) <= MAX_SKEW_SECONDS;\nconst signed = safeEqual(received, `v1=${expected}`);\n\nif (!fresh || !signed) return [{ json: { valid: false } }];\n\n// Only verified bytes are ever parsed.\nreturn [{ json: { valid: true, event: JSON.parse(rawBody) } }];"
+      }
+    },
+    {
+      "id": "is-signature-valid?",
+      "name": "Is signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1340,
+        480
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"unauthorized\" } }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "compose-email",
+      "name": "Compose email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const { eventId, type, recipient, actorFirstName, toolName, startDate, endDate } = $input.first().json.event;\nconst dates = startDate === endDate ? startDate : `${startDate} to ${endDate}`;\n// Convex rejects control characters at input; this also protects the Subject header.\nconst tool = String(toolName).replace(/[\\r\\n]+/g, ' ');\n\nconst templates = {\n  'request.created': {\n    subject: `${actorFirstName} would like to borrow your ${tool}`,\n    line: `${actorFirstName} asked to borrow your ${tool} for ${dates}. Open Incoming requests in LendLoop to approve or decline.`,\n  },\n  'request.approved': {\n    subject: `Approved: you can borrow the ${tool}`,\n    line: `${actorFirstName} approved your request for the ${tool} for ${dates}. Open My requests in LendLoop for their contact details.`,\n  },\n  'request.declined': {\n    subject: `Your request for the ${tool} was declined`,\n    line: `Your request for the ${tool} for ${dates} was declined. It may already be booked, so try other dates or another tool.`,\n  },\n  'request.cancelled': {\n    subject: `${actorFirstName} cancelled a request for your ${tool}`,\n    line: `${actorFirstName} no longer needs your ${tool} for ${dates}. No action is needed.`,\n  },\n  'loan.returned': {\n    subject: `Return confirmed: ${tool}`,\n    line: `${actorFirstName} confirmed that the ${tool} has been returned. Thanks for borrowing responsibly.`,\n  },\n};\n\nconst template = templates[type];\n// An unknown type is a contract break between Convex and this workflow: fail\n// loudly so the error workflow reports it, and Convex keeps the event to retry.\nif (!template) throw new Error(`Unknown event type: ${type}`);\n\nreturn [{\n  json: {\n    eventId,\n    to: recipient.email,\n    subject: template.subject,\n    text: `Hi ${recipient.firstName},\\n\\n${template.line}\\n\\nThe LendLoop team`,\n  },\n}];"
+      }
+    },
+    {
+      "id": "send-email",
+      "name": "Send email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1560,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "LendLoop <no-reply@lendloop.local>",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "LLsmtp0000000001",
+          "name": "LendLoop SMTP"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "prepare-ack",
+      "name": "Prepare ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Signed string: <timestamp>.<METHOD>.<path>.<exact body>. Must match\n// canonicalString() in convex/lib/hmac.ts.\n\nconst { eventId } = $('Compose email').first().json;\nconst body = JSON.stringify({ eventId });\nconst timestamp = String(Math.floor(Date.now() / 1000));\nreturn [{\n  json: {\n    body,\n    timestamp,\n    canonical: `${timestamp}.POST./n8n/notification-status.${body}`,\n  },\n}];"
+      }
+    },
+    {
+      "id": "sign-ack",
+      "name": "Sign ack",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        300
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "binaryData": false,
+        "value": "={{ $json.canonical }}",
+        "dataPropertyName": "signature",
+        "encoding": "hex"
+      },
+      "credentials": {
+        "crypto": {
+          "id": "LLhmacSign000001",
+          "name": "LendLoop outbound HMAC (n8n to Convex)"
+        }
+      }
+    },
+    {
+      "id": "ack-to-convex",
+      "name": "Ack to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "__CONVEX_SITE_URL__/n8n/notification-status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "=v1={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "respond-200",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2440,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"sent\" } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Request event webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare signature check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare signature check": {
+      "main": [
+        [
+          {
+            "node": "Compute expected HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute expected HMAC": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Is signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Compose email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose email": {
+      "main": [
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email": {
+      "main": [
+        [
+          {
+            "node": "Prepare ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare ack": {
+      "main": [
+        [
+          {
+            "node": "Sign ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign ack": {
+      "main": [
+        [
+          {
+            "node": "Ack to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ack to Convex": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "errorWorkflow": "LLerrorHandler01",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false
+  },
+  "pinData": {},
+  "versionId": "LLrequestNotify1-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

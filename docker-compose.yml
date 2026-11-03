@@ -1,0 +1,80 @@
+# Local automation stack: n8n plus Mailpit, a local inbox that catches all email.
+# Ports bind to loopback only. See README.md for setup.
+name: lendloop
+
+x-n8n-env: &n8n-env
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?run npm run setup:integration}
+  DB_TYPE: sqlite
+  GENERIC_TIMEZONE: UTC
+  TZ: UTC
+  N8N_DIAGNOSTICS_ENABLED: "false"
+  N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+  N8N_TEMPLATES_ENABLED: "false"
+  # Workflows get no access to process.env, including the encryption key.
+  N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+  N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+  # Executions can contain email addresses, so they are pruned after 7 days.
+  EXECUTIONS_DATA_PRUNE: "true"
+  EXECUTIONS_DATA_MAX_AGE: "168"
+
+services:
+  n8n-bootstrap:
+    image: n8nio/n8n:2.45.7
+    restart: "no"
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap.sh"]
+    environment:
+      <<: *n8n-env
+      # Only this short-lived container sees plaintext secrets. The running n8n
+      # gets them from its encrypted credential store.
+      CONVEX_TO_N8N_SECRET: ${CONVEX_TO_N8N_SECRET:?run npm run setup:integration}
+      N8N_TO_CONVEX_SECRET: ${N8N_TO_CONVEX_SECRET:?run npm run setup:integration}
+      CONVEX_SITE_URL: ${CONVEX_SITE_URL:-http://host.docker.internal:3211}
+      OPS_EMAIL: ${OPS_EMAIL:-ops@lendloop.local}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+      - ./n8n/bootstrap:/bootstrap:ro
+
+  n8n:
+    image: n8nio/n8n:2.45.7
+    restart: unless-stopped
+    depends_on:
+      n8n-bootstrap:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+    environment:
+      <<: *n8n-env
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      # Local HTTP only. Production runs behind TLS with secure cookies on.
+      N8N_SECURE_COOKIE: "false"
+    ports:
+      - "127.0.0.1:5678:5678"
+    extra_hosts:
+      # Makes host.docker.internal resolve on Linux too.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+
+volumes:
+  n8n_data:

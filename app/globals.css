@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+/*
+ * The workshop shadow board: enamel-blue pegboard, manila hang tags, brass and
+ * stamp-red marks. Every color in the app derives from these tokens.
+ */
+@theme {
+  --color-enamel-950: #0a1c26;
+  --color-enamel-900: #0f2935;
+  --color-enamel-800: #163847;
+  --color-enamel-700: #22505f;
+  --color-enamel-600: #38707f;
+  --color-zinc-line: #3f6372;
+  --color-steel: #a9c0c8;
+  --color-chalk: #eef4f2;
+  --color-manila: #e8cf8a;
+  --color-manila-soft: #f3e3b3;
+  --color-manila-edge: #b99a4c;
+  --color-ink: #14222a;
+  --color-ink-soft: #4b4a36;
+  --color-brass: #f0b429;
+  --color-stamp: #ff6b4a;
+  --color-stamp-deep: #b3301a;
+  --color-go: #6fd6a8;
+
+  --font-display: var(--font-space-grotesk), ui-sans-serif, sans-serif;
+  --font-sans: var(--font-dm-sans), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    background: var(--color-enamel-950);
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-enamel-950);
+    color: var(--color-chalk);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brass);
+    outline-offset: 2px;
+  }
+  /* The calendar glyph is dark by default on some browsers. */
+  input[type="date"] {
+    color-scheme: dark;
+  }
+  dialog::backdrop {
+    background: rgb(5 15 21 / 0.75);
+  }
+}
+
+@layer components {
+  /* Punched pegboard: real holes on a regular grid, as on a workshop wall. */
+  .pegboard {
+    background-color: var(--color-enamel-900);
+    background-image: radial-gradient(
+      circle at center,
+      var(--color-enamel-950) 0 2.5px,
+      transparent 3px
+    );
+    background-size: 28px 28px;
+    background-position: center top;
+  }
+
+  /*
+   * A hang tag: chamfered top corners, a punched eyelet, and a swing about that
+   * eyelet on hover. The "shadow" variant is what a tool leaves when it is out,
+   * the dashed outline a workshop paints on the wall behind each tool.
+   */
+  .tag {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 2.25rem 1rem 1rem;
+    color: var(--color-ink);
+    background: var(--color-manila);
+    clip-path: polygon(22px 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%, 0 22px);
+    transform-origin: 50% 13px;
+    transition: transform 240ms cubic-bezier(0.3, 1.5, 0.5, 1);
+  }
+  .tag::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 11px;
+    height: 11px;
+    margin-left: -5.5px;
+    border-radius: 9999px;
+    background: var(--color-enamel-950);
+    box-shadow: 0 0 0 2px var(--color-manila-edge);
+  }
+  .tag-swing:hover {
+    transform: rotate(-1.6deg);
+  }
+
+  .tag-shadow-wrap {
+    position: relative;
+    display: flex;
+    color: var(--color-steel);
+  }
+  .tag-shadow-wrap > svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    color: var(--color-zinc-line);
+    pointer-events: none;
+  }
+  .tag-shadow {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    padding: 2.25rem 1rem 1rem;
+  }
+  .tag-shadow::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 11px;
+    height: 11px;
+    margin-left: -5.5px;
+    border-radius: 9999px;
+    border: 1.5px dashed var(--color-zinc-line);
+  }
+
+  .skeleton {
+    background: var(--color-enamel-800);
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag {
+    transition: none;
+  }
+  .tag-swing:hover {
+    transform: none;
+  }
+  .skeleton {
+    animation: none;
+  }
+}
